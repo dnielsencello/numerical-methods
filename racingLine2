@@ -1,0 +1,126 @@
+import math
+
+
+def runge_kutta4_ndim(x, y, h, derivs):
+    n = len(y)
+    interval = h/2
+    slope = [0] * n
+    ynew = [0] * n
+    klist = [[0]*n]*4
+    klistfinal = [[0]*n]*4
+    klistfinal[0] = derivs(x, y)
+
+    for k in range(1, 4):
+        if k == 3:
+            interval = h
+        for i in range(n):
+            klist[k][i] = y[i] + klistfinal[k-1][i]*interval
+        klistfinal[k] = derivs(x+interval, klist[k])
+
+    for i in range(n):
+        slope[i] = (klistfinal[0][i] + 2 * (klistfinal[1][i] + klistfinal[2][i]) + klistfinal[3][i]) / 6
+        ynew[i] = y[i] + slope[i] * h
+    return ynew
+
+class State:
+    def __init__(self, xcom, ycom, yaw_radians):
+        self.xcom = xcom
+        self.ycom = ycom
+        self.yaw_radians = yaw_radians
+        self.lateral_vel = 0
+        self.angular_vel = 0
+
+    def to_vec(self):
+        # return the state variables as a vector
+        return[self.xcom, self.ycom, self.yaw_radians, self.lateral_vel, self.angular_vel]
+
+    def from_vec(self, y):
+        self.xcom = y[0]
+        self.ycom = y[1]
+        self.yaw_radians = y[2]
+        self.lateral_vel = y[3]
+        self.angular_vel = y[4]
+
+class Model:
+
+
+    def __init__(self, front_cornering_stiffness, rear_cornering_stiffness, front_length, rear_length, mass, mass_width,
+                 state):
+        self.front_cornering_stiffness = front_cornering_stiffness
+        self.rear_cornering_stiffness = rear_cornering_stiffness
+        self.front_length = front_length
+        self.rear_length = rear_length
+        self.mass = mass
+        self.mass_width = mass_width
+        self.state_ = state
+        self.rotational_intertia = (self.mass/12)*((self.front_length+self.rear_length)**2 + self.mass_width**2)
+
+    def input(self, longitudinal_velocity, steer_angle_):
+        self.longitudinal_velocity = longitudinal_velocity
+        self.steer_angle_ = steer_angle_
+
+    def curvature(self):
+        if ((self.state_.lateral_vel)**2 + (self.longitudinal_velocity)**2)**(1/2) != 0:
+            curvature = self.state_.angular_vel/(((self.state_.lateral_vel)**2 + (self.longitudinal_velocity)**2)**(1/2))
+            return(curvature)
+        else:
+            return(0)
+
+    def derivs(self, t, y):
+        self.state_.from_vec(y)
+        yawdot = self.state_.angular_vel
+        xcomdot = self.longitudinal_velocity*math.cos(self.state_.yaw_radians)-self.state_.lateral_vel*math.sin(self.state_.yaw_radians)###
+        ycomdot = self.longitudinal_velocity*math.sin(self.state_.yaw_radians)+self.state_.lateral_vel*math.cos(self.state_.yaw_radians)###
+
+        VBy = self.state_.lateral_vel-self.state_.angular_vel*self.rear_length
+        VBx = self.longitudinal_velocity
+        AlphaR = math.atan(VBy/VBx)
+        Fr = -self.rear_cornering_stiffness*AlphaR
+
+        VAy = self.state_.lateral_vel + self.state_.angular_vel*self.front_length
+        VAx = self.longitudinal_velocity
+        VAx1 = VAx*math.cos(self.steer_angle_) + VAy*math.sin(self.steer_angle_)
+        VAy1 = -VAx*math.sin(self.steer_angle_) + VAy*math.cos(self.steer_angle_)
+        AlphaF = math.atan(VAy1/VAx1)
+        Ff = -self.front_cornering_stiffness*AlphaF
+
+        wdot = (-self.rear_length*Fr + self.front_length*Ff*math.cos(self.steer_angle_))/self.rotational_intertia
+        Vlatdot = (Fr + Ff*math.cos(self.steer_angle_))/self.mass - self.state_.angular_vel*self.longitudinal_velocity
+
+        return(xcomdot, ycomdot, yawdot, Vlatdot, wdot)
+
+    def step(self, t, dt):
+        yin = self.state_.to_vec()
+        yout = runge_kutta4_ndim(t, yin, dt, self.derivs)
+        self.state_.from_vec(yout)
+
+def test1():
+    from matplotlib import pyplot as plt
+    state = State(0, 0, 0)
+    model = Model(1000, 1000, 2, 2, 1000, 2, state)
+    x = []
+    y = []
+    t = []
+    k = []
+    s = []
+    t0 = 0
+    time_step = 0.1
+    final_time = 800
+    while t0 < final_time:  # seconds
+        model.input(10, 0.01)
+        t.append(t0)
+        x.append(model.state_.xcom)
+        y.append(model.state_.ycom)
+        k.append(model.curvature())
+        s.append(model.steer_angle_)
+        model.step(t0, time_step)
+        t0 += time_step
+    fig, axs = plt.subplots(2)
+    axs[1].plot(x, y, 'b-')
+    plt.gca().set_aspect('equal', adjustable='box')
+    axs[0].plot(t, k, 'b-', t, s, 'g-')
+    plt.show()
+
+
+if __name__ == '__main__':
+    test1()
